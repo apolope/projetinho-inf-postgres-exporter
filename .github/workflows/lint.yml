@@ -1,0 +1,94 @@
+name: Lint
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  yamllint:
+    name: YAML Lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yamllint
+        run: pip install yamllint
+      - name: Lint queries.yaml
+        run: |
+          yamllint --config-data '{
+            extends: default,
+            rules: {
+              line-length: {max: 120},
+              truthy: disable
+            }
+          }' conf/queries.yaml monitoring/prometheus_alerts.yaml
+
+  promtool:
+    name: Prometheus Rules Validation
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Prometheus
+        run: |
+          wget -q https://github.com/prometheus/prometheus/releases/download/v2.51.0/prometheus-2.51.0.linux-amd64.tar.gz
+          tar -xzf prometheus-2.51.0.linux-amd64.tar.gz
+          sudo mv prometheus-2.51.0.linux-amd64/promtool /usr/local/bin/
+      - name: Validate alert rules
+        run: promtool check rules monitoring/prometheus_alerts.yaml
+
+  validate-queries:
+    name: Validate queries.yaml structure
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python deps
+        run: pip install PyYAML
+      - name: Validate queries.yaml schema
+        run: |
+          python3 - <<'EOF'
+          import yaml, sys
+
+          with open("conf/queries.yaml") as f:
+            queries = yaml.safe_load(f)
+
+          errors = []
+          for name, q in queries.items():
+            if "query" not in q:
+              errors.append(f"{name}: campo 'query' ausente")
+            if "metrics" not in q:
+              errors.append(f"{name}: campo 'metrics' ausente")
+            else:
+              for m in q["metrics"]:
+                for k, v in m.items():
+                  if "usage" not in v:
+                    errors.append(f"{name}.{k}: campo 'usage' ausente")
+
+          if errors:
+            for e in errors:
+              print(f"ERROR: {e}")
+            sys.exit(1)
+          print(f"OK: {len(queries)} queries validadas.")
+          EOF
+
+  gitleaks:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker-pull:
+    name: Validate Docker image tag exists
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pull exporter image (valida que a tag existe)
+        run: |
+          IMAGE=$(grep 'image:' docker/docker-compose.yml | awk '{print $2}')
+          echo "Verificando imagem: $IMAGE"
+          docker pull "$IMAGE"

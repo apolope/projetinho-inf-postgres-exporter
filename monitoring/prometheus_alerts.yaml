@@ -1,0 +1,115 @@
+---
+groups:
+  - name: postgres
+    rules:
+      # ── Postgres indisponível ─────────────────────────────────────────────
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: infra
+        annotations:
+          summary: "Postgres: exporter não consegue conectar"
+          description: >
+            O postgres-exporter não consegue conectar ao Postgres há 2 minutos.
+            Verifique se o container postgres está rodando e acessível na rede.
+          runbook_url: "https://github.com/org/projetinho-inf-postgres-exporter/blob/main/docs/ALERTS.md#PostgresDown"
+
+      # ── Conexões próximas do limite ───────────────────────────────────────
+      - alert: PostgresHighConnections
+        expr: |
+          (
+            pg_connections_by_state_count
+          ) / on() group_left()
+          pg_settings_max_connections > 0.80
+        for: 5m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Postgres: > 80% de max_connections em uso"
+          description: >
+            O banco está usando {{ $value | humanizePercentage }} de max_connections.
+            Verifique se o PgBouncer está funcionando e se há connection leaks.
+          runbook_url: "https://github.com/org/projetinho-inf-postgres-exporter/blob/main/docs/ALERTS.md#PostgresHighConnections"
+
+      # ── Queries lentas ────────────────────────────────────────────────────
+      - alert: PostgresSlowQueries
+        expr: pg_long_running_queries_count > 10
+        for: 5m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Postgres: mais de 10 queries com duração > 30s"
+          description: >
+            Há {{ $value }} queries rodando há mais de 30 segundos.
+            Pode indicar lock contention ou índices faltando.
+          runbook_url: "https://github.com/org/projetinho-inf-postgres-exporter/blob/main/docs/ALERTS.md#PostgresSlowQueries"
+
+      # ── Espaço em disco baixo ─────────────────────────────────────────────
+      - alert: PostgresDiskSpaceLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/var/lib/postgresql"}
+            / node_filesystem_size_bytes{mountpoint="/var/lib/postgresql"}
+          ) < 0.20
+        for: 10m
+        labels:
+          severity: critical
+          team: infra
+        annotations:
+          summary: "Postgres: menos de 20% de espaço livre no volume de dados"
+          description: >
+            O volume do Postgres tem apenas {{ $value | humanizePercentage }} de
+            espaço livre. Risco de crash por disco cheio.
+          runbook_url: "https://github.com/org/projetinho-inf-postgres-exporter/blob/main/docs/ALERTS.md#PostgresDiskSpaceLow"
+
+      # ── Dead tuples excessivas ────────────────────────────────────────────
+      - alert: PostgresDeadTuplesHigh
+        expr: pg_dead_tuples_dead_ratio_pct > 20
+        for: 30m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Postgres: tabela {{ $labels.table }} com > 20% de dead tuples"
+          description: >
+            A tabela {{ $labels.schema }}.{{ $labels.table }} tem
+            {{ $value }}% de dead tuples.
+            Execute VACUUM ANALYZE {{ $labels.schema }}.{{ $labels.table }};
+          runbook_url: "https://github.com/org/projetinho-inf-postgres-exporter/blob/main/docs/ALERTS.md#PostgresDeadTuplesHigh"
+
+      # ── Transação longa aberta ────────────────────────────────────────────
+      - alert: PostgresLongRunningTransaction
+        expr: pg_long_running_transactions_count > 0
+        for: 10m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Postgres: transação aberta há mais de 10 minutos"
+          description: >
+            Há {{ $value }} transação(ões) abertas há mais de 10 minutos.
+            Transações longas bloqueiam VACUUM e podem causar table bloat.
+            Identifique via: SELECT pid, query, xact_start FROM pg_stat_activity
+            WHERE xact_start < now() - interval '10 minutes';
+          runbook_url: >-
+            https://github.com/org/projetinho-inf-postgres-exporter/blob/main/docs/ALERTS.md#PostgresLongRunningTransaction
+
+      # ── Cache hit ratio baixo ─────────────────────────────────────────────
+      - alert: PostgresCacheHitRatioLow
+        expr: pg_cache_hit_ratio_cache_hit_ratio_pct < 95
+        for: 10m
+        labels:
+          severity: warning
+          team: infra
+        annotations:
+          summary: "Postgres: cache hit ratio < 95% no database {{ $labels.datname }}"
+          description: >
+            O cache hit ratio do database {{ $labels.datname }} está em
+            {{ $value }}% (abaixo do alvo de 95%).
+            Considere aumentar shared_buffers ou identificar queries com full scans.
+          runbook_url: >-
+            https://github.com/org/projetinho-inf-postgres-exporter/blob/main/docs/ALERTS.md#PostgresCacheHitRatioLow
