@@ -1,0 +1,37 @@
+name: Deploy Homologação
+
+on:
+  push:
+    branches: [release]
+
+jobs:
+  deploy:
+    name: Deploy para hom
+    runs-on: [self-hosted, a3s-ubd24-ipsep-01]
+    environment: homologacao
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Carregar env file
+        run: cp /opt/projetinho/hom/envs/postgres-exporter.env .env
+
+      - name: Deploy postgres-exporter
+        run: |
+          docker compose \
+            --env-file .env \
+            -f docker/docker-compose.yml \
+            up -d --pull always --remove-orphans
+
+      - name: Health check
+        run: |
+          for i in $(seq 1 12); do
+            status=$(docker inspect --format='{{.State.Health.Status}}' postgres-exporter 2>/dev/null)
+            [ "$status" = "healthy" ] && echo "postgres-exporter healthy" && exit 0
+            echo "Aguardando... status: ${status:-iniciando} (tentativa $i/12)"
+            sleep 10
+          done
+          echo "Timeout: postgres-exporter nao ficou healthy em 2 minutos"
+          docker logs --tail 50 postgres-exporter
+          exit 1
